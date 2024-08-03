@@ -2,11 +2,14 @@
 
 const crypto = require('crypto');
 
+const iv_v2 = Buffer.from([0x54, 0x40, 0x78, 0x44, 0x49, 0x67, 0x5a, 0x51, 0x6c, 0x5e, 0x63, 0x13]);
+const aad_v2 = Buffer.from('qualcomm-test');
+
 /**
  * Module containing encryption services
  * @param {String} key AES general key
  */
-module.exports = function(defaultKey = 'a3K8Bx%2r8Y7#xDh') {
+module.exports = function(defaultKey = 'a3K8Bx%2r8Y7#xDh', defaultKey_v2 = '{yxAHAY_Lm6pbC/<') {
     const EncryptionService = {
 
         /**
@@ -32,7 +35,21 @@ module.exports = function(defaultKey = 'a3K8Bx%2r8Y7#xDh') {
             const str = cipher.update(JSON.stringify(output), 'utf8', 'base64');
             const request = str + cipher.final('base64');
             return request;
-        }
+        },
+
+        decrypt_v2: (input, tag, key = genericKey_v2) => {
+            const tagbuffer = Buffer.from(tag, 'base64');
+            const decipher = crypto.createDecipheriv('aes-128-gcm', key, iv_v2).setAuthTag(tagbuffer).setAAD(aad_v2);
+            return JSON.parse(decipher.update(input.pack, 'base64', 'utf8') + decipher.final('utf8'));
+        },
+
+        encrypt_v2: (output, key = genericKey_v2) => {
+            const str = JSON.stringify(output);
+            const cipher = crypto.createCipheriv('aes-128-gcm', key, iv_v2).setAAD(aad_v2);
+            const pack = cipher.update(str, 'utf8', 'base64') + cipher.final('base64');
+            const tag = cipher.getAuthTag().toString('base64');
+            return {pack, tag};
+        },
     };
   
     return EncryptionService; 

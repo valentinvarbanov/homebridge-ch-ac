@@ -94,15 +94,25 @@ class Device {
             t: 'bind',
             uid: 0
         };
-        const encryptedBoundMessage = encryptionService.encrypt(message);
-        const request = {
+        let encryptedBoundMessage = encryptionService.encrypt(message);
+        let tag = null;
+        if (this.device.encryptionV2) {
+            const encrypted = encryptionService.encrypt_v2(message);
+            encryptedBoundMessage = encrypted.pack;
+            tag = encrypted.tag;
+        }
+        let request = {
             cid: 'app',
             i: 1,
             t: 'pack',
             uid: 0,
             pack: encryptedBoundMessage
         };
+        if (tag) {
+            request.tag = tag;
+        }
         const toSend = new Buffer(JSON.stringify(request));
+        this.log('Sending bind with message: %s request: %s', JSON.stringify(message), JSON.stringify(request));
         this.socket.send(toSend, 0, toSend.length, device.port, device.address);
         this.log('Sent bind request');
     }
@@ -145,11 +155,22 @@ class Device {
             return;
         }
         const message = JSON.parse(msg + '');
+        this.log.info('Received message: ' + msg + '');
         try {
             // Extract encrypted package from message using device key (if available)
-            const pack = encryptionService.decrypt(message, (this.device || {}).key);
+            let pack = null;
+            if (message.tag === undefined) {
+                pack = encryptionService.decrypt(message, (this.device || {}).key);
+            } else {
+                pack = encryptionService.decrypt_v2(message, message.tag, (this.device || {}).key);
+            }
             // If package type is response to handshake
+            this.log.info('Received message with packet %s', JSON.stringify(pack));
             if (pack.t === 'dev') {
+                if (pack.ver && pack.ver.startsWith('V2.')) {
+                    this.device.encryptionV2 = true;
+                    message.cid = pack.cid;
+                }
                 this._setDevice(message.cid, pack.name, rinfo.address, rinfo.port);
                 this._sendBindRequest(this.device);
 
@@ -181,7 +202,7 @@ class Device {
             // If package type is response, update device properties
             if (pack.t === 'res' && this.device.bound) {
                 pack.opt.forEach((opt, i) => {
-                    this.device.props[opt] = pack.val[i];
+                    this.device.props[opt] = pack.val ? pack.val[i] : pack.p[i];
                 });
                 this.options.onUpdate(this.device);
                 return;
@@ -216,7 +237,15 @@ class Device {
      * @param {number} [port] Port number
      */
     _sendRequest(message, address = this.device.address, port = this.device.port) {
-        const encryptedMessage = encryptionService.encrypt(message, this.device.key);
+        let encryptedMessage = null;
+        let tag = null;
+        if (this.device.encryptionV2) {
+            const encrypted = encryptionService.encrypt_v2(message, this.device.key);
+            encryptedMessage = encrypted.pack;
+            tag = encrypted.tag;
+        } else {
+            encryptedMessage = encryptionService.encrypt(message, this.device.key);
+        }
         const request = {
             cid: 'app',
             i: 0,
@@ -224,6 +253,9 @@ class Device {
             uid: 0,
             pack: encryptedMessage
         };
+        if (tag) {
+            request.tag = tag;
+        }
         const serializedRequest = new Buffer(JSON.stringify(request));
         this.socket.send(serializedRequest, 0, serializedRequest.length, port, address);
     };
